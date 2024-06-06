@@ -1,0 +1,151 @@
+import requests
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+from bs4 import BeautifulSoup
+from PIL import Image
+import numpy as np
+from collections import Counter
+from textblob import TextBlob
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.decomposition import LatentDirichletAllocation
+import seaborn as sns
+
+# nltk.download('stopwords')
+# nltk.download('punkt')
+# nltk.download('wordnet')
+# nltk.download('omw-1.4')
+
+# Function to prepare data (text)
+def prepare_text_data(url):
+    response = requests.get(url)
+    text_data = response.text
+
+    soup = BeautifulSoup(text_data, 'html.parser')
+
+    article_content = soup.find('article')
+
+    if article_content:
+        article_text = article_content.get_text()
+    else:
+        article_text = ""
+
+    start_phrase = "Movies are a complex web of narrative and presentation"
+    end_phrase = "Clever endings aren’t my bag."
+
+    start_index = article_text.find(start_phrase)
+    end_index = article_text.find(end_phrase)
+
+    if start_index == -1:
+        start_index = 0
+
+    if end_index == -1:
+        end_index = len(article_text)
+    else:
+        end_index += len(end_phrase)
+
+    text = article_text[start_index:end_index]
+
+    return text
+
+
+# Fnction to tokenize and clean data
+def clean_and_tokenize(text):
+    # Token
+    tokens = word_tokenize(text)
+
+    # Removing stopwords etc.
+    stop_words = set(stopwords.words('english'))
+    lemmatizer = WordNetLemmatizer()
+    cleaned_tokens = [lemmatizer.lemmatize(word.lower()) for word in tokens if
+                      word.lower() not in stop_words and word.isalpha()]
+
+    return cleaned_tokens
+
+#functions usage
+url = 'https://notthepopularopinion.wordpress.com/2022/11/05/what-was-that-all-about-the-crow-1994/'
+
+text = prepare_text_data(url)
+
+cleaned_tokens = clean_and_tokenize(text)
+
+# Analysis of frequency
+word_freq = Counter(cleaned_tokens)
+most_common_words = word_freq.most_common(15)
+common_words_dict = dict(most_common_words)
+
+#word cloud
+mask = np.array(Image.open('crow.png'))  # 'crow.png' musi być w tym samym katalogu co kod
+wordcloud = WordCloud(width=800, height=800, mask=mask, background_color='#1c1c1c', contour_color='black',
+                      contour_width=0, colormap='cividis').generate_from_frequencies(common_words_dict)
+
+plt.figure(figsize=(10, 5))
+plt.imshow(wordcloud, interpolation='bilinear')
+plt.axis("off")
+plt.show()
+
+# word graph
+words, counts = zip(*most_common_words)
+plt.figure(figsize=(12, 6))
+sns.barplot(x=list(counts), y=list(words), palette='viridis', alpha=0.8)
+plt.xlabel('Frequency', fontsize=14)
+plt.ylabel('Words', fontsize=14)
+plt.title('Top 15 Words in the Article', fontsize=16)
+plt.grid(axis='x', linestyle='--', alpha=0.7)
+for i, v in enumerate(counts):
+    plt.text(v + 0.2, i, str(v), color='black', va='center')
+plt.show()
+
+# Analyze sentiment
+text_str = ' '.join(cleaned_tokens)  # Convert token list for text blob
+analysis = TextBlob(text_str)
+sentiment = analysis.sentiment.polarity
+
+if sentiment > 0:
+    print("Positive sentiment")
+elif sentiment < 0:
+    print("Negative sentiment")
+else:
+    print("Neutral sentiment")
+
+texts = cleaned_tokens
+
+vectorizer = TfidfVectorizer()
+X = vectorizer.fit_transform(texts)
+
+# Topic modeling with LDA
+n_topics = 3
+lda = LatentDirichletAllocation(n_components=n_topics, random_state=42)
+lda.fit(X)
+
+
+# Function display top words
+def display_topics(model, feature_names, no_top_words):
+    for topic_idx, topic in enumerate(model.components_):
+        print(f"Topic {topic_idx}:")
+        print(" ".join([feature_names[i] for i in topic.argsort()[:-no_top_words - 1:-1]]))
+
+
+# Top words for topics
+no_top_words = 10
+tf_feature_names = vectorizer.get_feature_names_out()
+display_topics(lda, tf_feature_names, no_top_words)
+
+# Visualizing topics
+fig, axes = plt.subplots(n_topics, 1, figsize=(10, 8), sharex=True)
+colors = sns.color_palette('viridis', n_topics)
+for topic_idx, (topic, color) in enumerate(zip(lda.components_, colors)):
+    top_features_ind = topic.argsort()[:-no_top_words - 1:-1]
+    top_features = [tf_feature_names[i] for i in top_features_ind]
+    weights = topic[top_features_ind]
+
+    sns.barplot(x=weights, y=top_features, ax=axes[topic_idx], palette=[color] * no_top_words, alpha=0.8)
+    axes[topic_idx].set_title(f'Topic {topic_idx + 1}', fontsize=14)
+    for i, v in enumerate(weights):
+        axes[topic_idx].text(v + 0.01, i, f'{v:.2f}', color='black', va='center')
+
+plt.tight_layout()
+plt.show()
